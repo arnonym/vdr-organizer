@@ -94,7 +94,7 @@ class Organizer(object):
 
     def read_config(self, file_name):
         config = ConfigParser.RawConfigParser()
-        config.read(config_file_name)
+        config.read(file_name)
          
         self.default_path = config.get('Options', 'default-path')
         self.delete_duplicates = config.getboolean('Options', 'delete-duplicates')
