@@ -1,7 +1,5 @@
 #!/usr/bin/python
 
-VDR_PATH='/media/vdr'
-
 import ConfigParser
 import os
 import re
@@ -94,12 +92,13 @@ class Organizer(object):
         self.tv_show_config_list = TvShowConfigList()
         self.default_path = ''
 
-    def read_config(self, organizer, file_name):
+    def read_config(self, file_name):
         config = ConfigParser.RawConfigParser()
         config.read(config_file_name)
-        
+         
         self.default_path = config.get('Options', 'default-path')
         self.delete_duplicates = config.getboolean('Options', 'delete-duplicates')
+        self.vdr_recording_path = config.get('Options', 'vdr-recording-path')
         
         section_list = config.sections()
         for section_name in section_list:
@@ -139,12 +138,10 @@ args = parser.parse_args()
 
 
 organizer = Organizer()
-
-config_file_name = os.path.join(VDR_PATH, 'vdr-organizer.ini')
-organizer.read_config(organizer, config_file_name)
+organizer.read_config('/etc/vdr-organizer.ini')
 
 for tv_show_config in organizer.tv_show_config_list:
-    full_source_path = os.path.join(VDR_PATH, tv_show_config.source_path)
+    full_source_path = os.path.join(organizer.vdr_recording_path, tv_show_config.source_path)
     if not os.path.exists(full_source_path):
         print "[-] Source path '%s' not found." % full_source_path
         continue
@@ -157,7 +154,7 @@ for tv_show_config in organizer.tv_show_config_list:
         current_rec_path = os.path.join(full_source_path, rec)
         current_info_file = os.path.join(current_rec_path, 'info')
         if not os.path.exists(current_info_file):
-            print "    [-] Ignoring directory '%s'" % rec
+            print "    [-] Ignoring directory '%s'. Does not have info file." % rec
             continue
 
         print "    %s" % rec
@@ -169,8 +166,9 @@ for tv_show_config in organizer.tv_show_config_list:
             current_dest_file_name = os.path.join(current_dest_path, current_info.dest_file_name)
             print "        => %s" % (current_dest_file_name)
         else:
-            print "        %s" % current_info.title
-            print "        %s" % current_info.description[:100]
+            print "        [-] Could not guess title."
+            print "            Title: %s" % current_info.title
+            print "            Description: %s" % current_info.description[:100]
         
         # .ts files in source directory
         ts_file_list = glob.glob(os.path.join(current_rec_path, '*.ts'))
@@ -222,5 +220,5 @@ for tv_show_config in organizer.tv_show_config_list:
         print "        [+] Removing recording.."
         shutil.rmtree(current_rec_path)
 
-touch(os.path.join(VDR_PATH, '.update'))
+touch(os.path.join(organizer.vdr_recording_path, '.update'))
 
