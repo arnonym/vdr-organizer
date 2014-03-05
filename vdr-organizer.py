@@ -9,6 +9,23 @@ import sys
 import argparse
 
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+
+    def disable(self):
+        self.HEADER = ''
+        self.OKBLUE = ''
+        self.OKGREEN = ''
+        self.WARNING = ''
+        self.FAIL = ''
+        self.ENDC = ''
+
+
 SEASON_AND_EPISODE_GUESSER = [
     ('Season %(season)s/S%(season)sE%(episode)s.ts', re.compile('.*(?P<season>[0-9]+)\. Staffel, Folge (?P<episode>[0-9]+):')),    # 1. Staffel, Folge 3:
     ('Season %(season)s/S%(season)sE%(episode)s.ts', re.compile('.*(?P<season>[0-9]+)\. Staffel! (?P<episode>[0-9]+)\. Folge:')),  # 6. Staffel! 8. Folge:
@@ -51,11 +68,15 @@ class VdrInfoFile(object):
 
     @property
     def description(self):
-        return self.info_list['D']
+        if self.info_list.has_key('D'):
+           return self.info_list['D']
+        return ''
 
     @property
     def title(self):
-        return self.info_list['S']
+        if self.info_list.has_key('S'):
+            return self.info_list['S']
+        return ''
 
     def guess_dest_path(self, tv_show_config):
         if tv_show_config.dest_file_name:
@@ -141,13 +162,13 @@ organizer = Organizer()
 organizer.read_config('/etc/vdr-organizer.ini')
 
 for tv_show_config in organizer.tv_show_config_list:
+    full_dest_path = os.path.join(organizer.default_path, tv_show_config.dest_path)
+    print bcolors.HEADER + full_dest_path + bcolors.ENDC
+    
     full_source_path = os.path.join(organizer.vdr_recording_path, tv_show_config.source_path)
     if not os.path.exists(full_source_path):
-        print "[-] Source path '%s' not found." % full_source_path
+        print "    [-] Source path '%s' not found." % full_source_path
         continue
- 
-    full_dest_path = os.path.join(organizer.default_path, tv_show_config.dest_path)
-    print full_dest_path
 
     recording_list = os.listdir(full_source_path)
     for rec in sorted(recording_list):
@@ -172,9 +193,14 @@ for tv_show_config in organizer.tv_show_config_list:
         
         # .ts files in source directory
         ts_file_list = glob.glob(os.path.join(current_rec_path, '*.ts'))
-        for ts_file in ts_file_list:
+        temp_name_list, temp_size_list = [], []
+        full_size = 0
+        for ts_file in sorted(ts_file_list):
+            temp_name_list.append(os.path.basename(ts_file))
             size = os.path.getsize(ts_file)
-            print "        %s  %10s MiB" % (os.path.basename(ts_file), '{0:,}'.format(size/1024/1024))
+            full_size += size
+            temp_size_list.append('{0:,} MiB'.format(size/1024/1024))
+        print "        %s  [%s]" % (', '.join(temp_name_list), '; '.join(temp_size_list))
 
         if len(ts_file_list) == 0:
             print "        [-] No .ts file found"
@@ -196,7 +222,13 @@ for tv_show_config in organizer.tv_show_config_list:
         if error_count > 0:
             print "        [-] Recording has %d errors." % error_count
 
-        if os.path.exists(current_dest_file_name):
+        if full_size == 0:
+            print "        [-] Recording is empty."
+            print "        [+] Removing empty recording."
+            shutil.rmtree(current_rec_path)
+            continue
+
+        if guessed_dest_path and os.path.exists(current_dest_file_name):
             if (args.keep_duplicates):
                 print "        [-] Removing of duplicates overwritten from command line."
                 continue
@@ -207,7 +239,7 @@ for tv_show_config in organizer.tv_show_config_list:
             shutil.rmtree(current_rec_path)
             continue
 
-        if len(ts_file_list) != 1 or error_count != 0 or not guessed_dest_path:
+        if (len(ts_file_list) != 1) or (error_count != 0) or (not guessed_dest_path) or (full_size == 0):
             continue
 
         if not os.path.exists(current_dest_path):
