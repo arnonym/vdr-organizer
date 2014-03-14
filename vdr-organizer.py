@@ -11,8 +11,8 @@ import argparse
 
 class bcolors:
     HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
     WARNING = '\033[93m'
     FAIL = '\033[91m'
     ENDC = '\033[0m'
@@ -147,49 +147,93 @@ class Organizer(object):
             self.tv_show_config_list.append(tv_show_config)
 
 
+def list_directory(path, prefix='    '):
+    content = sorted(os.listdir(path))
+    for c in content:
+        print '%s%s' % (prefix, c)
+        full_path = os.path.join(path,c)
+        if os.path.isdir(full_path):
+            list_directory(full_path, prefix=prefix+'    ')
+
+
 parser = argparse.ArgumentParser(description='Organize TV Shows recorded from vdr.')
 
-parser.add_argument(
-    '--keep-duplicates', dest='keep_duplicates', action='store_const',
-    const=True, default=False,
-    help='Do not delete duplicates'
-)
+parser.add_argument('--dry', dest='dry', action='store_true', help='Dry run (do not harm)')
+parser.add_argument('--error-limit', dest='error_limit', action='store', type=int, default=0, help='How many errors may a recording have')
+parser.add_argument('--keep-duplicates', dest='keep_duplicates', action='store_true', help='Do not delete duplicates')
+parser.add_argument('--show', dest='show', action='store', help='Only process specific show')
+parser.add_argument('--rec', dest='rec', action='store', type=int, help='Only process specific recording (requires --show)')
+parser.add_argument('--move-to', dest='move_to', action='store', help='Moves a specific recording (requires --show, --rec)')
+parser.add_argument('--delete', dest='delete', action='store_true', help='Deletes a specific recording (requires --show, --rec)')
+parser.add_argument('--list', dest='list', action='store_true', help='Lists already sorted recordings (requires --show)')
 
 args = parser.parse_args()
 
+if (
+    (args.list and not args.show) or
+    (args.rec and not args.show) or 
+    (args.move_to and not args.rec) or 
+    (args.delete and not args.rec) or 
+    (args.move_to and args.delete) or
+    (args.move_to and args.list) or
+    (args.delete and args.list)
+    ):
+    parser.print_help()
+    sys.exit()
 
 organizer = Organizer()
 organizer.read_config('/etc/vdr-organizer.ini')
 
 for tv_show_config in organizer.tv_show_config_list:
+    if args.show and tv_show_config.dest_path != args.show:
+        continue
+
     full_dest_path = os.path.join(organizer.default_path, tv_show_config.dest_path)
     print bcolors.HEADER + full_dest_path + bcolors.ENDC
     
-    full_source_path = os.path.join(organizer.vdr_recording_path, tv_show_config.source_path)
-    if not os.path.exists(full_source_path):
-        print "    [-] Source path '%s' not found." % full_source_path
+    if args.list:
+        list_directory(full_dest_path, prefix='    ')
         continue
 
+    full_source_path = os.path.join(organizer.vdr_recording_path, tv_show_config.source_path)
+    if not os.path.exists(full_source_path):
+        #print "    [-] Source path '%s' not found." % full_source_path
+        continue
+
+    recording_index = 0
     recording_list = os.listdir(full_source_path)
     for rec in sorted(recording_list):
+        recording_index += 1
+
+        if args.rec and args.rec != recording_index:
+            continue
+        
+        print "    %s%s%s [%d]" % (bcolors.BLUE, rec, bcolors.ENDC, recording_index)
+
         current_rec_path = os.path.join(full_source_path, rec)
         current_info_file = os.path.join(current_rec_path, 'info')
         if not os.path.exists(current_info_file):
-            print "    [-] Ignoring directory '%s'. Does not have info file." % rec
+            print "        [-] Ignoring directory '%s'. Does not have info file." % rec
             continue
 
-        print "    %s" % rec
-        current_info = VdrInfoFile(current_info_file)
-        guessed_dest_path = current_info.guess_dest_path(tv_show_config) 
+        if not args.move_to:
+            current_info = VdrInfoFile(current_info_file)
+            has_dest_path = current_info.guess_dest_path(tv_show_config) 
        
-        if guessed_dest_path: 
-            current_dest_path = os.path.join(full_dest_path, current_info.dest_path)
-            current_dest_file_name = os.path.join(current_dest_path, current_info.dest_file_name)
-            print "        => %s" % (current_dest_file_name)
+            if has_dest_path: 
+                current_dest_path = os.path.join(full_dest_path, current_info.dest_path)
+                current_dest_file_name = os.path.join(current_dest_path, current_info.dest_file_name)
+                print "        => %s" % (current_dest_file_name)
+            else:
+                print "        [-] Could not guess title."
+                print "            Title: %s" % current_info.title
+                print "            Description: %s" % current_info.description[:100]
         else:
-            print "        [-] Could not guess title."
-            print "            Title: %s" % current_info.title
-            print "            Description: %s" % current_info.description[:100]
+            has_dest_path = True
+            temp_dest_path, temp_dest_file_name = os.path.split(args.move_to)
+            current_dest_path = os.path.join(full_dest_path, temp_dest_path)
+            current_dest_file_name = os.path.join(current_dest_path, temp_dest_file_name)
+            args.keep_duplicates = True
         
         # .ts files in source directory
         ts_file_list = glob.glob(os.path.join(current_rec_path, '*.ts'))
@@ -225,10 +269,11 @@ for tv_show_config in organizer.tv_show_config_list:
         if full_size == 0:
             print "        [-] Recording is empty."
             print "        [+] Removing empty recording."
-            shutil.rmtree(current_rec_path)
+            if (not args.dry):
+                shutil.rmtree(current_rec_path)
             continue
 
-        if guessed_dest_path and os.path.exists(current_dest_file_name):
+        if has_dest_path and os.path.exists(current_dest_file_name):
             if (args.keep_duplicates):
                 print "        [-] Removing of duplicates overwritten from command line."
                 continue
@@ -236,21 +281,25 @@ for tv_show_config in organizer.tv_show_config_list:
                 print "        [-] File already exists."
                 continue
             print "        [+] Removing duplicate."
-            shutil.rmtree(current_rec_path)
+            if (not args.dry):
+                shutil.rmtree(current_rec_path)
             continue
 
-        if (len(ts_file_list) != 1) or (error_count != 0) or (not guessed_dest_path) or (full_size == 0):
+        if (len(ts_file_list) != 1) or (error_count > args.error_limit) or (not has_dest_path) or (full_size == 0):
             continue
 
         if not os.path.exists(current_dest_path):
-            os.makedirs(current_dest_path)
+            if (not args.dry):
+                os.makedirs(current_dest_path)
         
         ts_file = ts_file_list[0] 
         
-        print "        [+] Copying file..."
-        shutil.copyfile(ts_file, current_dest_file_name)
+        print "        [+] Copying file to '%s'..." % current_dest_file_name
+        if (not args.dry):
+            shutil.copyfile(ts_file, current_dest_file_name)
         print "        [+] Removing recording.."
-        shutil.rmtree(current_rec_path)
+        if (not args.dry):
+            shutil.rmtree(current_rec_path)
 
 touch(os.path.join(organizer.vdr_recording_path, '.update'))
 
